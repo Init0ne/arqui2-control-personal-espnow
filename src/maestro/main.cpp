@@ -46,6 +46,7 @@ struct __attribute__((packed)) PaqueteESPNOW {
     uint8_t tipo;
     char origen;
     char tipoAcceso;
+    char direccion;
     uint8_t hashPIN[32];
     char uidTarjeta[15];
     uint32_t timestamp;
@@ -56,10 +57,11 @@ struct __attribute__((packed)) LogEntry {
     uint32_t timestamp;
     char origen;
     char tipoAcceso;
+    char direccion;
     char identificador[32];
     bool concedido;
 };
-static_assert(sizeof(LogEntry) == 39, "LogEntry size must be 39");
+static_assert(sizeof(LogEntry) == 40, "LogEntry size must be 40");
 
 String pinBuffer = "";
 QueueHandle_t colaESPNOW;
@@ -106,6 +108,27 @@ bool validarAcceso(char tipo, const uint8_t* hashPIN, const char* uid) {
         }
     }
     return false;
+}
+
+char determinarDireccion(const char* identificador) {
+    uint32_t count = prefLogs.getUInt("count", 0);
+    time_t now = time(nullptr);
+    if (now < 100000) return 'E';
+    uint32_t today = (uint32_t)(now / 86400);
+    uint32_t same = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        char key[14];
+        snprintf(key, sizeof(key), "log_%u", i);
+        if (!prefLogs.isKey(key)) continue;
+        LogEntry e;
+        memset(&e, 0, sizeof(e));
+        size_t len = prefLogs.getBytes(key, (uint8_t*)&e, sizeof(LogEntry));
+        if (len != sizeof(LogEntry)) continue;
+        if (e.concedido && e.timestamp / 86400 == today && strncmp(e.identificador, identificador, sizeof(e.identificador)) == 0) {
+            same++;
+        }
+    }
+    return (same % 2 == 0) ? 'E' : 'S';
 }
 
 void actLCD(const String& l0, const String& l1, uint16_t ms) {
@@ -228,6 +251,7 @@ void logAcceso(const PaqueteESPNOW* pkt, bool concedido) {
         strncpy(entry.identificador, "PIN Cifrado", sizeof(entry.identificador) - 1);
     }
     entry.concedido = concedido;
+    entry.direccion = determinarDireccion(entry.identificador);
     prefLogs.putBytes(("log_" + String(idx)).c_str(), (uint8_t*)&entry, sizeof(LogEntry));
     Serial.printf("[LOG] %u|%c|%c|%s|%d\n",
         entry.timestamp, entry.origen, entry.tipoAcceso,
@@ -274,6 +298,7 @@ void handleLog(PaqueteESPNOW* pkt) {
         strncpy(entry.identificador, "PIN Cifrado", sizeof(entry.identificador) - 1);
     }
     entry.concedido = concedido;
+    entry.direccion = determinarDireccion(entry.identificador);
     prefLogs.putBytes(("log_" + String(logIdx)).c_str(), (uint8_t*)&entry, sizeof(LogEntry));
     sendACK(idx);
     Serial.printf("[SYNC] Log recibido fifoIdx=%u concedido=%d -> ACK\n", idx, concedido);
@@ -416,7 +441,7 @@ input:focus{border-color:#1a73e8;box-shadow:0 0 0 2px rgba(26,115,232,.2)}
 </div>
 <div id="Logs" class="tabcontent" style="display:block">
 <div class="bar"><span style="font-weight:500">Registros de acceso</span><button class="btn btn-del" onclick="limpiarLogs()">Limpiar Logs</button></div>
-<table><thead><tr><th>Fecha/Hora</th><th>Puerta</th><th>Tipo</th><th>Identificador</th><th>Resultado</th></tr></thead><tbody id="logBody"></tbody></table>
+<table><thead><tr><th>Fecha/Hora</th><th>Puerta</th><th>Tipo</th><th>Dirección</th><th>Identificador</th><th>Resultado</th></tr></thead><tbody id="logBody"></tbody></table>
 </div>
 <div id="Usuarios" class="tabcontent">
 <div class="bar"><span style="font-weight:500">Usuarios registrados</span><button class="btn btn-add" onclick="mostrarFormulario()">+ Agregar Usuario</button></div>
@@ -432,7 +457,7 @@ input:focus{border-color:#1a73e8;box-shadow:0 0 0 2px rgba(26,115,232,.2)}
 </div>
 <script>
 function abrirPestana(e,n){document.querySelectorAll('.tabcontent').forEach(t=>t.style.display='none');document.querySelectorAll('.tablinks').forEach(b=>b.className='tablinks');document.getElementById(n).style.display='block';e.currentTarget.className='tablinks active'}
-async function cargarLogs(){try{const r=await fetch('/api/logs'),d=await r.json();const t=document.getElementById('logBody');t.innerHTML='';if(!d.length){t.innerHTML='<tr><td colspan="5" class="empty">Sin registros</td></tr>';return}d.forEach(l=>{const tr=t.insertRow();tr.insertCell().textContent=l.fecha;tr.insertCell().textContent=l.puerta;tr.insertCell().textContent=l.tipo;tr.insertCell().textContent=l.id;const c=tr.insertCell();const b=document.createElement('span');b.className='badge '+(l.resultado==='CONCEDIDO'?'badge-ok':'badge-deny');b.textContent=l.resultado;c.appendChild(b)})}catch(e){console.error(e)}}
+async function cargarLogs(){try{const r=await fetch('/api/logs'),d=await r.json();const t=document.getElementById('logBody');t.innerHTML='';if(!d.length){t.innerHTML='<tr><td colspan="6" class="empty">Sin registros</td></tr>';return}d.forEach(l=>{const tr=t.insertRow();tr.insertCell().textContent=l.fecha;tr.insertCell().textContent=l.puerta;tr.insertCell().textContent=l.tipo;tr.insertCell().textContent=l.direccion;tr.insertCell().textContent=l.id;const c=tr.insertCell();const b=document.createElement('span');b.className='badge '+(l.resultado==='CONCEDIDO'?'badge-ok':'badge-deny');b.textContent=l.resultado;c.appendChild(b)})}catch(e){console.error(e)}}
 async function cargarUsuarios(){try{const r=await fetch('/api/users'),d=await r.json();const t=document.getElementById('userBody');t.innerHTML='';if(!d.length){t.innerHTML='<tr><td colspan="4" class="empty">Sin usuarios</td></tr>';return}d.forEach((u,i)=>{const tr=t.insertRow();tr.insertCell().textContent=i+1;tr.insertCell().textContent=u.pin?u.pin.substring(0,16)+'...':'-';tr.insertCell().textContent=u.uid||'-';const c=tr.insertCell();const b=document.createElement('button');b.className='btn btn-del';b.textContent='Eliminar';b.onclick=()=>eliminarUsuario(i);c.appendChild(b)})}catch(e){console.error(e)}}
 async function eliminarUsuario(i){if(!confirm('Eliminar usuario '+(i+1)+'?'))return;await fetch('/api/users/remove',{method:'POST',body:new URLSearchParams({index:i})});cargarUsuarios()}
 function mostrarFormulario(){document.getElementById('addForm').style.display='block'}
@@ -503,6 +528,8 @@ void handleAPILogs() {
         json += (entry.origen == '1') ? "Puerta Maestro" : "Puerta 2";
         json += "\",\"tipo\":\"";
         json += (entry.tipoAcceso == 'P') ? "PIN" : "Tarjeta";
+        json += "\",\"direccion\":\"";
+        json += entry.concedido ? ((entry.direccion == 'E') ? "ENTRADA" : "SALIDA") : "-";
         json += "\",\"id\":\"";
         json += idEsc;
         json += "\",\"resultado\":\"";
