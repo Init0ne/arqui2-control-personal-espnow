@@ -20,8 +20,8 @@
 #define PMK_KEY "CONTROL_PERSONAL"
 #define LMK_KEY "ACCESO_SEGURO_16"
 
-#define WIFI_SSID "ClaroGB"
-#define WIFI_PASS "20242322"
+#define WIFI_SSID "RedmiNote14"
+#define WIFI_PASS "6aypt4vhntyyxce"
 
 const byte FILAS = 4;
 const byte COLUMNAS = 4;
